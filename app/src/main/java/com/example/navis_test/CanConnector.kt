@@ -1,10 +1,15 @@
 package com.example.navis_test
 import android.os.IBinder
 import hust.can.ICan
+import java.util.concurrent.CopyOnWriteArrayList
 
 class CanConnector {
     object CanServiceConnector {
         private var canService: ICan? = null
+
+        @Volatile private var isReading = false
+        private var readThread: Thread? = null
+        private val listeners = CopyOnWriteArrayList<(Int, ByteArray) -> Unit>()
 
         fun connect(): Boolean {
             try {
@@ -26,6 +31,8 @@ class CanConnector {
             return canService?.canWrite(canId, data, extended) ?: false
         }
 
+        fun isConnected(): Boolean = canService != null
+
         // Trả về Pair<canId thật, payload thật theo đúng dlc>, hoặc null nếu lỗi
         fun read(): Pair<Int, ByteArray>? {
             // Cấp phát sẵn buffer cố định: 4 byte canId + 8 byte data tối đa = 12 byte
@@ -43,7 +50,47 @@ class CanConnector {
             return Pair(canId, payload)
         }
 
+        // Đăng ký để nhận mọi gói CAN đọc được (dùng chung 1 luồng đọc cho toàn app,
+        // tránh nhiều màn hình cùng gọi read() và tranh nhau dữ liệu).
+        fun addListener(listener: (Int, ByteArray) -> Unit) {
+            listeners.add(listener)
+        }
+
+        fun removeListener(listener: (Int, ByteArray) -> Unit) {
+            listeners.remove(listener)
+        }
+
+        fun startReadingLoop() {
+            if (isReading) return
+            isReading = true
+            readThread = Thread {
+                while (isReading) {
+                    val result = read()
+                    if (result != null) {
+                        val (canId, payload) = result
+                        for (listener in listeners) {
+                            listener(canId, payload)
+                        }
+                    }
+                    try {
+                        Thread.sleep(100)
+                    } catch (e: InterruptedException) {
+                        break
+                    }
+                }
+            }
+            readThread?.start()
+        }
+
+        fun stopReadingLoop() {
+            isReading = false
+            readThread = null
+        }
+
+        fun isReadingActive(): Boolean = isReading
+
         fun close() {
+            stopReadingLoop()
             canService?.canClose()
         }
     }
