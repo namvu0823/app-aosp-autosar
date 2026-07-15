@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">navis_test</string>
+    <string name="title_vehicle_status">Trạng thái xe</string>
+    <string name="title_door_status">Cửa</string>
+    <string name="title_climate_status">Điều hoà</string>
+    <string name="title_car_model">Mô hình xe</string>
+    <string name="title_light_control">Điều khiển Đèn</string>
+    <string name="title_light_switch">Bật/Tắt đèn</string>
+    <string name="title_diagnostics">Chẩn đoán hệ thống</string>
+    <string name="title_vin_id">VIN ID</string>
+    <string name="title_advanced_settings">Cài đặt nâng cao</string>
+    <string name="title_warning_threshold">Ghi ngưỡng cảnh báo</string>
+    <string name="hint_threshold">Nhập ngưỡng&#8230;</string>
+    <string name="btn_save">LƯU</string>
+    <string name="btn_normal">NORMAL</string>
+    <string name="btn_blink">BLINK</string>
+    <string name="fuel_status_normal">Bình thường</string>
+    <string name="fuel_status_warning">Cảnh báo</string>
+    <string name="door_locked">Đã Khoá</string>
+    <string name="door_unlocked">Đã Mở</string>
+    <string name="climate_on">Đang Bật</string>
+    <string name="climate_off">Đang Tắt</string>
+    <string name="error_light_command">Gửi lệnh điều khiển đèn thất bại</string>
+</resources>
