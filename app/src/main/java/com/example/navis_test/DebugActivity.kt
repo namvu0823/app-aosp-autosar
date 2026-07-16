@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -38,7 +39,7 @@ class DebugActivity : ImmersiveActivity() {
         scrollLog = findViewById(R.id.scrollLog)
         btnToggleReading = findViewById(R.id.btnToggleReading)
 
-        findViewById<Button>(R.id.btnBack).setOnClickListener { finish() }
+        findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finish() }
         findViewById<Button>(R.id.btnClearLog).setOnClickListener { tvLog.text = "" }
 
         updateToggleReadingLabel()
