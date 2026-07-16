@@ -32,6 +32,9 @@
     <string name="title_can_monitor">CAN Monitor</string>
     <string name="can_rx_placeholder">RX  --</string>
     <string name="can_tx_placeholder">TX  --</string>
+    <string name="status_online">ONLINE</string>
+    <string name="status_offline">không kết nối</string>
+    <string name="status_error">LỖI</string>
     <string name="title_can_debug">Gỡ lỗi CAN</string>
     <string name="title_can_send">Gửi gói tin</string>
     <string name="title_can_log">Nhật ký CAN</string>

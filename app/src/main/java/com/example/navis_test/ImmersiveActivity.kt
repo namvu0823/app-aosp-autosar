@@ -9,6 +9,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 abstract class ImmersiveActivity : AppCompatActivity() {
 
     protected fun hideSystemBars() {
+        val window = this.window
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val insetsController = WindowInsetsControllerCompat(window, window.decorView)
         insetsController.hide(WindowInsetsCompat.Type.systemBars())

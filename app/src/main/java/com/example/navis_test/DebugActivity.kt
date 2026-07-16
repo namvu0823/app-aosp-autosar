@@ -76,11 +76,14 @@ class DebugActivity : ImmersiveActivity() {
         }
 
         val extended = cbExtended.isChecked
-        val success = CanConnector.CanServiceConnector.write(canId, data, extended)
-        if (success) {
-            appendLog("TX", canId, data)
-        } else {
-            Toast.makeText(this, R.string.msg_can_send_failed, Toast.LENGTH_SHORT).show()
+        CanConnector.CanServiceConnector.writeAsync(canId, data, extended) { success ->
+            runOnUiThread {
+                if (success) {
+                    appendLog("TX", canId, data)
+                } else {
+                    Toast.makeText(this, R.string.msg_can_send_failed, Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 

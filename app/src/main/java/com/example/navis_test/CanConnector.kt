@@ -1,43 +1,92 @@
+
 package com.example.navis_test
+
 import android.os.IBinder
 import hust.can.ICan
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class CanConnector {
     object CanServiceConnector {
         private var canService: ICan? = null
+        private val lock = Any()
 
         @Volatile private var isReading = false
         private var readThread: Thread? = null
         private val listeners = CopyOnWriteArrayList<(Int, ByteArray) -> Unit>()
 
+        // Executor riêng để mọi thao tác binder (open/write/close) không bao giờ
+        // chạy trên main thread. Chỉ 1 thread để tránh nhiều lệnh ghi/mở tranh nhau.
+        private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "CanService-IO").apply { isDaemon = true }
+        }
+
         fun connect(): Boolean {
             try {
                 val serviceManager = Class.forName("android.os.ServiceManager")
                 val getService = serviceManager.getMethod("getService", String::class.java)
-                val binder = getService.invoke(null, "navis.can.ICan/default") as? IBinder
-                canService = ICan.Stub.asInterface(binder)
+
+                val serviceName = "hust.can.ICan/default"
+                android.util.Log.d("CanConnector", "Attempting to connect to service: $serviceName")
+
+                val binder = getService.invoke(null, serviceName) as? IBinder
+                if (binder == null) {
+                    android.util.Log.e("CanConnector", "Service $serviceName returned null binder")
+                    return false
+                }
+
+                synchronized(lock) {
+                    canService = ICan.Stub.asInterface(binder)
+                }
+                android.util.Log.d("CanConnector", "Connected to CanService successfully")
             } catch (e: Exception) {
+                android.util.Log.e("CanConnector", "Connect exception: ${e.message}")
                 e.printStackTrace()
             }
             return canService != null
         }
 
-        fun open(ifName: String, bitrate: Int): Boolean {
-            return canService?.canOpen(ifName, bitrate) ?: false
+        /**
+         * BỎ hàm open() đồng bộ cũ — KHÔNG dùng nữa vì có thể block main thread.
+         * Dùng openAsync() thay thế.
+         */
+        fun openAsync(ifName: String, bitrate: Int, callback: (Boolean) -> Unit) {
+            ioExecutor.execute {
+                val service = synchronized(lock) { canService }
+                val result = if (service != null) {
+                    safeCall("open") { service.canOpen(ifName, bitrate) }
+                } else false
+                callback(result)
+            }
         }
 
-        fun write(canId: Int, data: ByteArray, extended: Boolean): Boolean {
-            return canService?.canWrite(canId, data, extended) ?: false
+        /**
+         * BỎ hàm write() đồng bộ cũ — KHÔNG dùng nữa vì có thể block main thread.
+         * Dùng writeAsync() thay thế.
+         */
+        fun writeAsync(canId: Int, data: ByteArray, extended: Boolean, callback: ((Boolean) -> Unit)? = null) {
+            ioExecutor.execute {
+                val service = synchronized(lock) { canService }
+                val result = if (service != null) {
+                    safeCall("write") { service.canWrite(canId, data, extended) }
+                } else false
+                callback?.invoke(result)
+            }
         }
 
-        fun isConnected(): Boolean = canService != null
+        fun isConnected(): Boolean = synchronized(lock) { canService != null }
 
-        // Trả về Pair<canId thật, payload thật theo đúng dlc>, hoặc null nếu lỗi
-        fun read(): Pair<Int, ByteArray>? {
-            // Cấp phát sẵn buffer cố định: 4 byte canId + 8 byte data tối đa = 12 byte
+        // Trả về Pair<canId thật, payload thật theo đúng dlc>, hoặc null nếu lỗi.
+        // Hàm này CHỈ được gọi từ readThread (background), không gọi trực tiếp từ UI.
+        private fun read(): Pair<Int, ByteArray>? {
             val rawBuffer = ByteArray(12)
-            val dlc = canService?.canRead(rawBuffer) ?: -1
+            val service = synchronized(lock) { canService } ?: return null
+            
+            val dlc = safeCall("read") {
+                service.canRead(rawBuffer)
+            }
 
             if (dlc < 0) return null
 
@@ -52,6 +101,8 @@ class CanConnector {
 
         // Đăng ký để nhận mọi gói CAN đọc được (dùng chung 1 luồng đọc cho toàn app,
         // tránh nhiều màn hình cùng gọi read() và tranh nhau dữ liệu).
+        // LƯU Ý: listener được gọi trên background thread (readThread) — nếu cần
+        // cập nhật UI, caller phải tự post lên main thread (Handler/runOnUiThread).
         fun addListener(listener: (Int, ByteArray) -> Unit) {
             listeners.add(listener)
         }
@@ -63,13 +114,18 @@ class CanConnector {
         fun startReadingLoop() {
             if (isReading) return
             isReading = true
-            readThread = Thread {
+            readThread = Thread({
                 while (isReading) {
                     val result = read()
                     if (result != null) {
                         val (canId, payload) = result
+                        android.util.Log.d("CanConnector", "Received CAN: ID=0x${Integer.toHexString(canId)}, Data=${payload.joinToString(" ") { "%02X".format(it) }}")
                         for (listener in listeners) {
-                            listener(canId, payload)
+                            try {
+                                listener(canId, payload)
+                            } catch (e: Exception) {
+                                android.util.Log.e("CanConnector", "Listener threw: ${e.message}")
+                            }
                         }
                     }
                     try {
@@ -78,12 +134,13 @@ class CanConnector {
                         break
                     }
                 }
-            }
+            }, "CanService-Read").apply { isDaemon = true }
             readThread?.start()
         }
 
         fun stopReadingLoop() {
             isReading = false
+            readThread?.interrupt()
             readThread = null
         }
 
@@ -91,7 +148,48 @@ class CanConnector {
 
         fun close() {
             stopReadingLoop()
-            canService?.canClose()
+            ioExecutor.execute {
+                val service = synchronized(lock) {
+                    val s = canService
+                    canService = null
+                    s
+                }
+                safeCall("close") {
+                    service?.canClose()
+                    true
+                }
+            }
+        }
+
+        /**
+         * Gọi shutdown khi không còn cần dùng connector nữa (ví dụ onDestroy của Application),
+         * để giải phóng thread trong ioExecutor.
+         */
+        fun shutdown() {
+            stopReadingLoop()
+            ioExecutor.shutdown()
+            try {
+                if (!ioExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    ioExecutor.shutdownNow()
+                }
+            } catch (e: InterruptedException) {
+                ioExecutor.shutdownNow()
+            }
+        }
+
+        // Bọc mọi binder call: bắt exception (DeadObjectException, RemoteException, ...)
+        // để service crash/không phản hồi không làm chết app hoặc treo caller.
+        private fun <T> safeCall(tag: String, block: () -> T): T {
+            return try {
+                block()
+            } catch (e: Exception) {
+                android.util.Log.e("CanConnector", "$tag() failed: ${e.message}")
+                @Suppress("UNCHECKED_CAST")
+                when (tag) {
+                    "read" -> -1 as T
+                    else -> false as T
+                }
+            }
         }
     }
 }

@@ -38,6 +38,7 @@ class MainActivity : ImmersiveActivity() {
     private lateinit var btnReadVin: Button
     private lateinit var tvCanRx: TextView
     private lateinit var tvCanTx: TextView
+    private lateinit var tvCanStatus: TextView
     private lateinit var lightsListener: CompoundButton.OnCheckedChangeListener
 
     // Gộp dữ liệu VIN nhận về từ 3 khung ISO-TP (First Frame + 2 Consecutive Frame) trên ID 0x769
@@ -58,16 +59,25 @@ class MainActivity : ImmersiveActivity() {
         showThresholdResult(success = false, errorCode = "04")
     }
 
+    private val rxLog = mutableListOf<String>()
+    private val txLog = mutableListOf<String>()
+    private val MAX_LOG = 5
+
     // Nhận mọi gói CAN đọc được từ luồng đọc dùng chung (CanConnector.CanServiceConnector)
     private val canListener: (Int, ByteArray) -> Unit = { canId, payload ->
         runOnUiThread {
-            tvCanRx.text = "RX  " + formatCanPacket(canId, payload)
+            val logEntry = "RX  " + formatCanPacket(canId, payload)
+            rxLog.add(0, logEntry)
+            if (rxLog.size > MAX_LOG) rxLog.removeAt(rxLog.size - 1)
+            tvCanRx.text = rxLog.joinToString("\n")
+
             handleCanMessage(canId, payload)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        android.util.Log.i("MainActivity", "onCreate started")
         setContentView(R.layout.activity_main)
 
         // Khởi tạo các view
@@ -90,6 +100,10 @@ class MainActivity : ImmersiveActivity() {
         btnReadVin = findViewById(R.id.btnReadVin)
         tvCanRx = findViewById(R.id.tvCanRx)
         tvCanTx = findViewById(R.id.tvCanTx)
+        tvCanStatus = findViewById(R.id.tvCanStatus)
+
+        tvCanRx.text = "RX: Idle"
+        tvCanTx.text = "TX: Idle"
 
         val btnSave: Button = findViewById(R.id.btnSave)
         val btnOpenCanDebug: ImageButton = findViewById(R.id.btnOpenCanDebug)
@@ -105,8 +119,10 @@ class MainActivity : ImmersiveActivity() {
         // Hiệu ứng xoay cho quạt
         startFanAnimation()
 
-        // Tự động kết nối và mở CAN ngay khi vào màn hình
-        connectCan()
+        // Tự động kết nối và mở CAN sau khi giao diện đã load xong
+        Handler(Looper.getMainLooper()).postDelayed({
+            connectCan()
+        }, 500)
 
         // Điều khiển đèn qua Switch: bật -> 0x3A6 byte0=01, tắt -> byte0=02
         lightsListener = CompoundButton.OnCheckedChangeListener { _, isChecked ->
@@ -130,40 +146,64 @@ class MainActivity : ImmersiveActivity() {
     }
 
     private fun connectCan() {
+        android.util.Log.i("MainActivity", "connectCan() called")
         val connected = CanConnector.CanServiceConnector.connect()
         if (connected) {
-            val opened = CanConnector.CanServiceConnector.open("can0", 500000)
-            if (opened) {
-                Toast.makeText(this, "Đã kết nối CAN: can0 (500k)", Toast.LENGTH_SHORT).show()
-                CanConnector.CanServiceConnector.startReadingLoop()
-            } else {
-                Toast.makeText(this, "Không thể mở cổng CAN", Toast.LENGTH_SHORT).show()
+            android.util.Log.i("MainActivity", "Service connected, opening can0...")
+            CanConnector.CanServiceConnector.openAsync("can0", 500000) { opened ->
+                runOnUiThread {
+                    if (opened) {
+                        android.util.Log.i("MainActivity", "can0 opened successfully")
+                        tvCanStatus.text = getString(R.string.status_online)
+                        tvCanStatus.setTextColor(getColor(R.color.neon_green))
+
+                        CanConnector.CanServiceConnector.startReadingLoop()
+                    } else {
+                        android.util.Log.e("MainActivity", "Failed to open can0")
+                        tvCanStatus.text = getString(R.string.status_error)
+                        tvCanStatus.setTextColor(getColor(R.color.warning_red))
+                    }
+                }
             }
         } else {
-            Toast.makeText(this, "Không thể kết nối Service", Toast.LENGTH_SHORT).show()
+            android.util.Log.e("MainActivity", "Failed to connect to CAN service")
+            tvCanStatus.text = getString(R.string.status_offline)
+            tvCanStatus.setTextColor(getColor(R.color.warning_red))
         }
     }
 
-    // ---- Điều khiển đèn (ghi qua 0x3A6) ----
+    // Điều khiển đèn (ghi qua 0x3A6) ----
 
     private fun writeLightOnOff(turnOn: Boolean): Boolean {
         val data = ByteArray(8)
         data[0] = if (turnOn) 0x01 else 0x02
-        return writeAndLog(0x3A6, data)
+        writeAndLog(0x3A6, data)
+        return true // Trả về true tạm thời vì việc ghi là async
     }
 
     private fun writeLightMode(blink: Boolean): Boolean {
         val data = ByteArray(8)
         data[1] = if (blink) 0x02 else 0x01
-        return writeAndLog(0x3A6, data)
+        writeAndLog(0x3A6, data)
+        return true // Trả về true tạm thời vì việc ghi là async
     }
 
-    private fun writeAndLog(canId: Int, data: ByteArray): Boolean {
-        val success = CanConnector.CanServiceConnector.write(canId, data, false)
-        if (success) {
-            tvCanTx.text = "TX  " + formatCanPacket(canId, data)
+    private fun writeAndLog(canId: Int, data: ByteArray, callback: ((Boolean) -> Unit)? = null) {
+        android.util.Log.d("MainActivity", "Sending TX: ID=0x${Integer.toHexString(canId)}")
+        CanConnector.CanServiceConnector.writeAsync(canId, data, false) { success ->
+            runOnUiThread {
+                val prefix = if (success) "TX  " else "TX (ERR) "
+                val logEntry = prefix + formatCanPacket(canId, data)
+                txLog.add(0, logEntry)
+                if (txLog.size > MAX_LOG) txLog.removeAt(txLog.size - 1)
+                tvCanTx.text = txLog.joinToString("\n")
+                
+                if (!success) {
+                    android.util.Log.e("MainActivity", "Write FAILED for ID=0x${Integer.toHexString(canId)}")
+                }
+                callback?.invoke(success)
+            }
         }
-        return success
     }
 
     private fun formatCanPacket(canId: Int, payload: ByteArray): String {
@@ -293,13 +333,14 @@ class MainActivity : ImmersiveActivity() {
         }
 
         val data = byteArrayOf(0x04, 0x2E, 0xF1.toByte(), 0x03, threshold.toByte(), 0, 0, 0)
-        val success = writeAndLog(0x768, data)
-        if (success) {
-            thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
-            thresholdTimeoutHandler.postDelayed(thresholdTimeoutRunnable, THRESHOLD_TIMEOUT_MS)
-        } else {
-            val errorCode = if (!CanConnector.CanServiceConnector.isConnected()) "01" else "02"
-            showThresholdResult(success = false, errorCode = errorCode)
+        writeAndLog(0x768, data) { success ->
+            if (success) {
+                thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
+                thresholdTimeoutHandler.postDelayed(thresholdTimeoutRunnable, THRESHOLD_TIMEOUT_MS)
+            } else {
+                val errorCode = if (!CanConnector.CanServiceConnector.isConnected()) "01" else "02"
+                showThresholdResult(success = false, errorCode = errorCode)
+            }
         }
     }
 

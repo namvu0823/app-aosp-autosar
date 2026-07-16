@@ -61,15 +61,33 @@
                 android:orientation="vertical"
                 android:padding="12dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/title_can_monitor"
-                    android:textColor="@color/dashboard_on_surface_variant"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.04"
-                    android:textAllCaps="true" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/title_can_monitor"
+                        android:textColor="@color/dashboard_on_surface_variant"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true" />
+
+                    <TextView
+                        android:id="@+id/tvCanStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="NULL"
+                        android:textColor="@color/warning_red"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:textAllCaps="true" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvCanRx"
@@ -77,11 +95,12 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:fontFamily="monospace"
-                    android:text="@string/can_rx_placeholder"
+                    android:text=""
                     android:textColor="@color/electric_blue"
-                    android:textSize="13sp"
-                    android:maxLines="1"
-                    android:ellipsize="end" />
+                    android:textSize="12sp"
+                    android:maxLines="5"
+                    android:minLines="1"
+                    android:ellipsize="none" />
 
                 <TextView
                     android:id="@+id/tvCanTx"
@@ -89,11 +108,12 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:fontFamily="monospace"
-                    android:text="@string/can_tx_placeholder"
+                    android:text=""
                     android:textColor="@color/neon_green"
-                    android:textSize="13sp"
-                    android:maxLines="1"
-                    android:ellipsize="end" />
+                    android:textSize="12sp"
+                    android:maxLines="5"
+                    android:minLines="1"
+                    android:ellipsize="none" />
             </LinearLayout>
         </FrameLayout>
 
@@ -466,7 +486,7 @@
                                 android:paddingHorizontal="18dp"
                                 android:paddingVertical="8dp"
                                 android:text="@string/btn_read_vin"
-                                android:textColor="@color/dashboard_primary"
+                                android:textColor="@color/glass_sheen_end"
                                 android:textSize="14sp"
                                 android:textStyle="bold" />
                         </LinearLayout>
