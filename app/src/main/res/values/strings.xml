@@ -9,6 +9,9 @@
     <string name="title_diagnostics">Chẩn đoán hệ thống</string>
     <string name="title_vin_id">VIN ID</string>
     <string name="btn_read_vin">ĐỌC</string>
+    <string name="vin_not_read">Chưa đọc</string>
+    <string name="vin_reading">Đang đọc…</string>
+    <string name="vin_read_failed">Đọc thất bại</string>
     <string name="title_warning_threshold">Ngưỡng cảnh báo</string>
     <string name="hint_threshold">0-100</string>
     <string name="btn_save">GHI</string>

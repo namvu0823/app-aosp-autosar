@@ -486,7 +486,8 @@
                                 android:paddingHorizontal="18dp"
                                 android:paddingVertical="8dp"
                                 android:text="@string/btn_read_vin"
-                                android:textColor="@color/glass_sheen_end"
+
+                                android:textColor="#FFFFFF"
                                 android:textSize="14sp"
                                 android:textStyle="bold" />
                         </LinearLayout>
@@ -497,8 +498,8 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
                             android:fontFamily="monospace"
-                            android:text=""
-                            android:textColor="@color/dashboard_on_surface"
+                            android:text="@string/vin_not_read"
+                            android:textColor="@color/dashboard_on_surface_variant"
                             android:textSize="18sp"
                             android:textStyle="bold"
                             android:maxLines="1"

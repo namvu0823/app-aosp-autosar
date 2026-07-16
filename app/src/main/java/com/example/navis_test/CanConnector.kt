@@ -127,11 +127,18 @@ class CanConnector {
                                 android.util.Log.e("CanConnector", "Listener threw: ${e.message}")
                             }
                         }
-                    }
-                    try {
-                        Thread.sleep(100)
-                    } catch (e: InterruptedException) {
-                        break
+                        // Còn dữ liệu thì đọc tiếp ngay — không sleep, nếu không
+                        // các khung ISO-TP về liền nhau (VIN) sẽ bị dồn ứ/drop
+                        // khi bus có broadcast 0x3C6 liên tục.
+                    } else {
+                        // Không có frame: canRead() phía service đã poll chờ 200ms
+                        // rồi mới trả -1. Nghỉ ngắn thêm để không quay tít khi
+                        // service chết (safeCall trả -1 ngay lập tức).
+                        try {
+                            Thread.sleep(20)
+                        } catch (e: InterruptedException) {
+                            break
+                        }
                     }
                 }
             }, "CanService-Read").apply { isDaemon = true }

@@ -59,6 +59,13 @@ class MainActivity : ImmersiveActivity() {
         showThresholdResult(success = false, errorCode = "04")
     }
 
+    private val vinTimeoutHandler = Handler(Looper.getMainLooper())
+    private val vinTimeoutRunnable = Runnable {
+        vinExpectedLength = -1
+        tvVinId.text = getString(R.string.vin_read_failed)
+        tvVinId.setTextColor(getColor(R.color.warning_red))
+    }
+
     private val rxLog = mutableListOf<String>()
     private val txLog = mutableListOf<String>()
     private val MAX_LOG = 5
@@ -312,10 +319,15 @@ class MainActivity : ImmersiveActivity() {
     }
 
     private fun requestVin() {
-        writeAndLog(0x768, byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x90.toByte(), 0, 0, 0, 0))
-        writeAndLog(0x768, byteArrayOf(0x30, 0, 0, 0, 0, 0, 0, 0))
         vinBuffer.clear()
         vinExpectedLength = -1
+        tvVinId.text = getString(R.string.vin_reading)
+        tvVinId.setTextColor(getColor(R.color.dashboard_on_surface_variant))
+        vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
+        vinTimeoutHandler.postDelayed(vinTimeoutRunnable, VIN_TIMEOUT_MS)
+
+        writeAndLog(0x768, byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x90.toByte(), 0, 0, 0, 0))
+        writeAndLog(0x768, byteArrayOf(0x30, 0, 0, 0, 0, 0, 0, 0))
     }
 
     private fun writeThreshold() {
@@ -426,7 +438,9 @@ class MainActivity : ImmersiveActivity() {
 
     private fun tryFinishVin() {
         if (vinExpectedLength in 0..vinBuffer.length) {
+            vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
             tvVinId.text = vinBuffer.substring(0, vinExpectedLength)
+            tvVinId.setTextColor(getColor(R.color.dashboard_on_surface))
             vinExpectedLength = -1
         }
     }
@@ -441,6 +455,7 @@ class MainActivity : ImmersiveActivity() {
         CanConnector.CanServiceConnector.removeListener(canListener)
         fuelPollHandler.removeCallbacks(fuelPollRunnable)
         thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
+        vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
         super.onPause()
     }
 
@@ -452,5 +467,6 @@ class MainActivity : ImmersiveActivity() {
     companion object {
         private const val FUEL_POLL_INTERVAL_MS = 1000L
         private const val THRESHOLD_TIMEOUT_MS = 2000L
+        private const val VIN_TIMEOUT_MS = 2000L
     }
 }
