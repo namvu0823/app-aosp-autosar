@@ -17,6 +17,7 @@
     <string name="btn_save">GHI</string>
     <string name="msg_write_success">Ghi thành công</string>
     <string name="msg_write_failed">Ghi thất bại - Mã lỗi: %s</string>
+    <string name="msg_threshold_readback">Ghi thành công — ECU đang giữ ngưỡng = %1$d</string>
     <string name="btn_normal">NORMAL</string>
     <string name="btn_blink">BLINK</string>
     <string name="fuel_status_normal">Bình thường</string>

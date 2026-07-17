@@ -37,6 +37,14 @@ namespace aidl::hust::can
             return ndk::ScopedAStatus::ok();
         }
 
+        // Nới rộng RX buffer: broadcast 0x3C6 chạy liên tục, khi VIN trả về một
+        // burst Consecutive Frame mà vòng đọc chưa kịp gom thì buffer mặc định dễ
+        // tràn → rớt khung → đọc VIN chập chờn. 1MB chịu được hàng nghìn frame.
+        int rcvbuf = 1024 * 1024;
+        if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
+            printf("Warning: cannot set SO_RCVBUF: %s\n", strerror(errno));
+        }
+
         struct ifreq ifr;
         std::memset(&ifr, 0, sizeof(ifr));
         std::strncpy(ifr.ifr_name, in_ifName.c_str(), sizeof(ifr.ifr_name) - 1);
