@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.RotateAnimation
@@ -78,6 +79,10 @@ class MainActivity : ImmersiveActivity() {
     private var udsActive: UdsTx? = null
     private val udsHandler = Handler(Looper.getMainLooper())
     private val udsTimeoutRunnable = Runnable { onUdsTimeout() }
+    // Mốc uptime (ms) lần phát bản tin 0x768 gần nhất qua hàng đợi. Dùng để giữ
+    // cycle time tối thiểu UDS_TX_MIN_GAP_MS giữa hai bản tin 0x768 liên tiếp.
+    private var lastUdsTxAt = 0L
+    private val pumpUdsRunnable = Runnable { pumpUds() }
 
     private val rxLog = mutableListOf<String>()
     private val txLog = mutableListOf<String>()
@@ -339,10 +344,22 @@ class MainActivity : ImmersiveActivity() {
     }
 
     // Nếu đang rảnh, lấy request kế tiếp ra gửi và đặt timeout cho nó.
+    // Giữ cycle time tối thiểu giữa hai bản tin 0x768: nếu chưa đủ UDS_TX_MIN_GAP_MS
+    // kể từ lần phát trước thì hoãn, phát khi đủ giờ (không rút request ra khỏi hàng đợi).
+    // Lưu ý: khung Flow Control của VIN (30 00 ...) được gửi thẳng, KHÔNG qua hàng đợi,
+    // nên không bị giãn — giữ đúng thời gian ISO-TP.
     private fun pumpUds() {
         if (udsActive != null) return
+        if (udsQueue.isEmpty()) return
+        val sinceLastTx = SystemClock.uptimeMillis() - lastUdsTxAt
+        if (sinceLastTx < UDS_TX_MIN_GAP_MS) {
+            udsHandler.removeCallbacks(pumpUdsRunnable)
+            udsHandler.postDelayed(pumpUdsRunnable, UDS_TX_MIN_GAP_MS - sinceLastTx)
+            return
+        }
         val tx = udsQueue.removeFirstOrNull() ?: return
         udsActive = tx
+        lastUdsTxAt = SystemClock.uptimeMillis()
         udsHandler.postDelayed(udsTimeoutRunnable, tx.timeoutMs)
         writeAndLog(tx.canId, tx.data) { success ->
             // Gửi lên bus thất bại → huỷ luôn transaction này, chuyển tiếp.
@@ -478,15 +495,16 @@ class MainActivity : ImmersiveActivity() {
         tvThresholdResult.visibility = View.VISIBLE
     }
 
-    // Gửi yêu cầu đọc lại ngưỡng đang lưu trên ECU (DID F1 03). ECU trả về
-    // 62 F1 03 <g_Threshold>; xem showThresholdReadback để hiển thị.
+    // Đọc lại ngưỡng đang lưu trên ECU (DID F1 03) chỉ để HIỂN THỊ giá trị thực,
+    // KHÔNG dùng để phán ghi thành/bại — lệnh ghi đã được response 6E xác nhận rồi.
+    // Nếu ECU trả 62 F1 03 <g_Threshold> thì showThresholdReadback hiện giá trị;
+    // nếu ECU không hỗ trợ đọc DID này (không đáp / trả NRC) thì bỏ qua im lặng,
+    // giữ nguyên thông báo "Ghi thành công" thay vì báo lỗi đỏ gây hiểu nhầm.
     private fun requestThresholdReadback() {
         enqueueUds(UdsTx("thresholdRead", 0x768,
             byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x03, 0, 0, 0, 0), UDS_TIMEOUT_MS,
             onTimeout = {
-                tvThresholdResult.text = getString(R.string.msg_threshold_readback_failed)
-                tvThresholdResult.setTextColor(getColor(R.color.warning_red))
-                tvThresholdResult.visibility = View.VISIBLE
+                android.util.Log.d("MainActivity", "Threshold readback (22 F1 03) không có phản hồi — bỏ qua, ghi vẫn OK")
             }))
     }
 
@@ -614,6 +632,7 @@ class MainActivity : ImmersiveActivity() {
         fuelPollHandler.removeCallbacks(fuelPollRunnable)
         // Dừng hàng đợi UDS: xoá timeout đang chờ và mọi request còn treo.
         udsHandler.removeCallbacks(udsTimeoutRunnable)
+        udsHandler.removeCallbacks(pumpUdsRunnable)
         udsQueue.clear()
         udsActive = null
         super.onPause()
@@ -629,6 +648,8 @@ class MainActivity : ImmersiveActivity() {
         private const val THRESHOLD_TIMEOUT_MS = 2000L
         // Timeout chờ phản hồi cho một request UDS single-frame (đọc nhiên liệu/trạng thái).
         private const val UDS_TIMEOUT_MS = 500L
+        // Cycle time tối thiểu giữa hai bản tin 0x768 phát xuống S32K144 (giãn tải cho ECU).
+        private const val UDS_TX_MIN_GAP_MS = 1000L
         // Timeout mỗi LƯỢT đọc VIN (ngắn để retry nhanh khi rớt khung), và số lượt tối đa.
         private const val VIN_ATTEMPT_TIMEOUT_MS = 700L
         private const val VIN_MAX_ATTEMPTS = 3
