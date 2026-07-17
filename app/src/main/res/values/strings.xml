@@ -1,5 +1,6 @@
 <resources>
-    <string name="app_name">navis_test</string>
+    <string name="app_name">CANtrolX</string>
+    <string name="toggle_dark_mode">Bật/tắt chế độ tối</string>
     <string name="title_vehicle_status">Trạng thái xe</string>
     <string name="title_door_status">Cửa</string>
     <string name="title_climate_status">Điều hoà</string>

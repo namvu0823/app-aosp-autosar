@@ -33,7 +33,7 @@
                 android:padding="24dp"
                 android:contentDescription="@string/title_car_model"
                 android:scaleType="fitCenter"
-                android:src="@drawable/tesla" />
+                android:src="@drawable/ferrari" />
 
             <ImageButton
                 android:id="@+id/btnOpenCanDebug"
@@ -47,6 +47,20 @@
                 android:contentDescription="@string/title_can_debug"
                 android:scaleType="fitCenter"
                 android:src="@android:drawable/ic_menu_edit"
+                app:tint="@color/dashboard_on_surface_variant" />
+
+            <ImageButton
+                android:id="@+id/btnToggleTheme"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="top|start"
+                android:layout_margin="12dp"
+                android:background="@drawable/glass_panel"
+                android:elevation="4dp"
+                android:padding="8dp"
+                android:contentDescription="@string/toggle_dark_mode"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_dark_mode"
                 app:tint="@color/dashboard_on_surface_variant" />
 
             <!-- CAN read/write monitor overlay -->

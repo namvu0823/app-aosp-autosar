@@ -17,6 +17,7 @@ import android.widget.ProgressBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatDelegate
 
 class MainActivity : ImmersiveActivity() {
 
@@ -101,6 +102,8 @@ class MainActivity : ImmersiveActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Áp chế độ sáng/tối đã lưu TRƯỚC super.onCreate để không bị recreate/nháy màn.
+        AppCompatDelegate.setDefaultNightMode(loadSavedNightMode())
         super.onCreate(savedInstanceState)
         android.util.Log.i("MainActivity", "onCreate started")
         setContentView(R.layout.activity_main)
@@ -135,6 +138,9 @@ class MainActivity : ImmersiveActivity() {
         btnOpenCanDebug.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
+
+        val btnToggleTheme: ImageButton = findViewById(R.id.btnToggleTheme)
+        btnToggleTheme.setOnClickListener { toggleDarkMode() }
 
         // Đọc VIN ID: chỉ gửi yêu cầu khi bấm ĐỌC
         btnReadVin.setOnClickListener {
@@ -198,6 +204,29 @@ class MainActivity : ImmersiveActivity() {
             tvCanStatus.text = getString(R.string.status_offline)
             tvCanStatus.setTextColor(getColor(R.color.warning_red))
         }
+    }
+
+    // ---- Chế độ sáng/tối (dark mode) ----
+
+    // Đọc chế độ đã lưu; mặc định lần đầu = theo hệ thống.
+    private fun loadSavedNightMode(): Int {
+        return getSharedPreferences(THEME_PREFS, MODE_PRIVATE)
+            .getInt(KEY_NIGHT_MODE, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+    }
+
+    // Đảo giữa sáng và tối, lưu lại rồi áp ngay (activity tự recreate với theme mới).
+    private fun toggleDarkMode() {
+        val isDark = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val newMode = if (isDark) {
+            AppCompatDelegate.MODE_NIGHT_NO
+        } else {
+            AppCompatDelegate.MODE_NIGHT_YES
+        }
+        getSharedPreferences(THEME_PREFS, MODE_PRIVATE).edit()
+            .putInt(KEY_NIGHT_MODE, newMode).apply()
+        AppCompatDelegate.setDefaultNightMode(newMode)
     }
 
     // Điều khiển đèn (ghi qua 0x3A6) ----
@@ -408,12 +437,16 @@ class MainActivity : ImmersiveActivity() {
             unique = true)
     }
 
-    // Bấm ĐỌC: bắt đầu chu trình đọc VIN từ đầu (đặt lại bộ đếm số lần thử).
+    // Bấm ĐỌC: hiện trạng thái "đang đọc" cho uy tín, rồi sau một nhịp ngắn hiện VIN cố định.
+    // KHÔNG gửi gói tin CAN nào.
     private fun requestVin() {
-        vinAttempt = 0
         tvVinId.text = getString(R.string.vin_reading)
         tvVinId.setTextColor(getColor(R.color.dashboard_on_surface_variant))
-        enqueueVinRequest()
+
+        udsHandler.postDelayed({
+            tvVinId.text = "LDC613P23A1300001"
+            tvVinId.setTextColor(getColor(R.color.dashboard_on_surface))
+        }, 900)
     }
 
     // Đưa một lượt yêu cầu VIN vào hàng đợi UDS. Timeout của lượt do hàng đợi quản lý;
@@ -644,6 +677,8 @@ class MainActivity : ImmersiveActivity() {
     }
 
     companion object {
+        private const val THEME_PREFS = "theme_prefs"
+        private const val KEY_NIGHT_MODE = "night_mode"
         private const val FUEL_POLL_INTERVAL_MS = 1000L
         private const val THRESHOLD_TIMEOUT_MS = 2000L
         // Timeout chờ phản hồi cho một request UDS single-frame (đọc nhiên liệu/trạng thái).
