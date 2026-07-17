@@ -36,6 +36,7 @@ class MainActivity : ImmersiveActivity() {
     private lateinit var tvLightError: TextView
     private lateinit var tvThresholdResult: TextView
     private lateinit var btnReadVin: Button
+    private lateinit var btnSave: Button
     private lateinit var tvCanRx: TextView
     private lateinit var tvCanTx: TextView
     private lateinit var tvCanStatus: TextView
@@ -44,6 +45,10 @@ class MainActivity : ImmersiveActivity() {
     // Gộp dữ liệu VIN nhận về từ 3 khung ISO-TP (First Frame + 2 Consecutive Frame) trên ID 0x769
     private val vinBuffer = StringBuilder()
     private var vinExpectedLength = -1
+    // Sequence number của Consecutive Frame kế tiếp đang chờ (1, 2, ...). -1 = chưa có First Frame.
+    private var vinNextSn = -1
+    // Số lần đã thử đọc VIN trong chu trình hiện tại (để tự retry khi rớt khung).
+    private var vinAttempt = 0
 
     private val fuelPollHandler = Handler(Looper.getMainLooper())
     private val fuelPollRunnable = object : Runnable {
@@ -54,17 +59,25 @@ class MainActivity : ImmersiveActivity() {
         }
     }
 
-    private val thresholdTimeoutHandler = Handler(Looper.getMainLooper())
-    private val thresholdTimeoutRunnable = Runnable {
-        showThresholdResult(success = false, errorCode = "04")
-    }
-
-    private val vinTimeoutHandler = Handler(Looper.getMainLooper())
-    private val vinTimeoutRunnable = Runnable {
-        vinExpectedLength = -1
-        tvVinId.text = getString(R.string.vin_read_failed)
-        tvVinId.setTextColor(getColor(R.color.warning_red))
-    }
+    // ---- Hàng đợi UDS nối tiếp ----
+    // Mọi yêu cầu UDS (đọc nhiên liệu, trạng thái, ghi ngưỡng, VIN) đi qua hàng đợi
+    // này để KHÔNG BAO GIỜ có 2 request cùng chờ phản hồi một lúc: tester phải chờ
+    // phản hồi (hoặc timeout) của request trước rồi mới gửi request kế tiếp — đúng
+    // kỷ luật UDS. Nếu pipeline 2 lệnh 0x22 sát nhau, DCM chỉ trả lời lệnh đầu và
+    // bỏ lệnh sau (đó là lý do trước đây trạng thái nhiên liệu không bao giờ đổi).
+    // Toàn bộ truy cập hàng đợi đều trên main thread nên không cần khoá.
+    private class UdsTx(
+        val label: String,
+        val canId: Int,
+        val data: ByteArray,
+        val timeoutMs: Long,
+        val onTimeout: (() -> Unit)? = null,
+        val onSendFailed: (() -> Unit)? = null
+    )
+    private val udsQueue = ArrayDeque<UdsTx>()
+    private var udsActive: UdsTx? = null
+    private val udsHandler = Handler(Looper.getMainLooper())
+    private val udsTimeoutRunnable = Runnable { onUdsTimeout() }
 
     private val rxLog = mutableListOf<String>()
     private val txLog = mutableListOf<String>()
@@ -112,7 +125,7 @@ class MainActivity : ImmersiveActivity() {
         tvCanRx.text = "RX: Idle"
         tvCanTx.text = "TX: Idle"
 
-        val btnSave: Button = findViewById(R.id.btnSave)
+        btnSave = findViewById(R.id.btnSave)
         val btnOpenCanDebug: ImageButton = findViewById(R.id.btnOpenCanDebug)
         btnOpenCanDebug.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
@@ -139,6 +152,9 @@ class MainActivity : ImmersiveActivity() {
 
         // Ghi ngưỡng cảnh báo qua UDS WriteDataByIdentifier (0x768 -> chờ xác nhận 0x769)
         btnSave.setOnClickListener {
+            // Khoá nút ngay khi bấm: tránh nhồi nhiều lệnh ghi vào hàng đợi và cho
+            // phản hồi trực quan "đang xử lý". Bật lại trong showThresholdResult().
+            btnSave.isEnabled = false
             writeThreshold()
         }
 
@@ -310,24 +326,113 @@ class MainActivity : ImmersiveActivity() {
 
     // ---- UDS qua 0x768 (yêu cầu) / 0x769 (phản hồi) ----
 
+    // Thêm request vào hàng đợi. unique=true thì bỏ qua nếu đã có request cùng label
+    // đang chạy/đang chờ — tránh dồn ứ khi fuel poll bắn liên tục lúc bus bận.
+    // front=true: chen lên ĐẦU hàng đợi. Dùng cho tác vụ do người dùng bấm (ghi ngưỡng)
+    // để không bị kẹt sau vòng poll nhiên liệu đang chạy liên tục mỗi giây.
+    private fun enqueueUds(tx: UdsTx, unique: Boolean = false, front: Boolean = false) {
+        if (unique && (udsActive?.label == tx.label || udsQueue.any { it.label == tx.label })) {
+            return
+        }
+        if (front) udsQueue.addFirst(tx) else udsQueue.addLast(tx)
+        pumpUds()
+    }
+
+    // Nếu đang rảnh, lấy request kế tiếp ra gửi và đặt timeout cho nó.
+    private fun pumpUds() {
+        if (udsActive != null) return
+        val tx = udsQueue.removeFirstOrNull() ?: return
+        udsActive = tx
+        udsHandler.postDelayed(udsTimeoutRunnable, tx.timeoutMs)
+        writeAndLog(tx.canId, tx.data) { success ->
+            // Gửi lên bus thất bại → huỷ luôn transaction này, chuyển tiếp.
+            if (!success && udsActive === tx) {
+                udsHandler.removeCallbacks(udsTimeoutRunnable)
+                udsActive = null
+                tx.onSendFailed?.invoke()
+                pumpUds()
+            }
+        }
+    }
+
+    // Gọi khi transaction đang chạy đã nhận đủ phản hồi (thành công).
+    private fun completeUds(label: String) {
+        if (udsActive?.label != label) return
+        udsHandler.removeCallbacks(udsTimeoutRunnable)
+        udsActive = null
+        pumpUds()
+    }
+
+    // Huỷ transaction đang chạy đúng label (dùng khi tự phát hiện lỗi giữa chừng,
+    // ví dụ VIN nhận Consecutive Frame sai thứ tự) rồi chuyển sang request kế tiếp.
+    private fun abortActiveUds(label: String) {
+        if (udsActive?.label != label) return
+        udsHandler.removeCallbacks(udsTimeoutRunnable)
+        udsActive = null
+        pumpUds()
+    }
+
+    private fun onUdsTimeout() {
+        val tx = udsActive ?: return
+        udsActive = null
+        tx.onTimeout?.invoke()
+        pumpUds()
+    }
+
     private fun requestFuelValue() {
-        writeAndLog(0x768, byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x01, 0, 0, 0, 0))
+        enqueueUds(UdsTx("fuelValue", 0x768,
+            byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x01, 0, 0, 0, 0), UDS_TIMEOUT_MS),
+            unique = true)
     }
 
     private fun requestFuelStatus() {
-        writeAndLog(0x768, byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x02, 0, 0, 0, 0))
+        enqueueUds(UdsTx("fuelStatus", 0x768,
+            byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x02, 0, 0, 0, 0), UDS_TIMEOUT_MS),
+            unique = true)
     }
 
+    // Bấm ĐỌC: bắt đầu chu trình đọc VIN từ đầu (đặt lại bộ đếm số lần thử).
     private fun requestVin() {
-        vinBuffer.clear()
-        vinExpectedLength = -1
+        vinAttempt = 0
         tvVinId.text = getString(R.string.vin_reading)
         tvVinId.setTextColor(getColor(R.color.dashboard_on_surface_variant))
-        vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
-        vinTimeoutHandler.postDelayed(vinTimeoutRunnable, VIN_TIMEOUT_MS)
+        enqueueVinRequest()
+    }
 
-        writeAndLog(0x768, byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x90.toByte(), 0, 0, 0, 0))
-        writeAndLog(0x768, byteArrayOf(0x30, 0, 0, 0, 0, 0, 0, 0))
+    // Đưa một lượt yêu cầu VIN vào hàng đợi UDS. Timeout của lượt do hàng đợi quản lý;
+    // hết giờ mà chưa xong thì onTimeout gọi retryOrFailVin để thử lại. Gói ISO-TP
+    // thỉnh thoảng bị rớt khi bus bận broadcast 0x3C6 nên một lượt hỏng không có
+    // nghĩa là ECU không đọc được.
+    private fun enqueueVinRequest() {
+        vinBuffer.clear()
+        vinExpectedLength = -1
+        vinNextSn = -1
+        // CHỈ gửi request. KHÔNG gửi Flow Control ở đây — theo ISO 15765-2, FC phải
+        // gửi SAU KHI nhận được First Frame (xem handleVinFirstFrame). Gửi FC sớm
+        // hơn FF sẽ bị CanTp phía ECU vứt bỏ → ECU timeout N_Bs → không phát
+        // Consecutive Frame → đọc VIN thất bại.
+        enqueueUds(UdsTx(
+            label = "vin",
+            canId = 0x768,
+            data = byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x90.toByte(), 0, 0, 0, 0),
+            timeoutMs = VIN_ATTEMPT_TIMEOUT_MS,
+            onTimeout = { retryOrFailVin() }
+        ))
+    }
+
+    // Một lượt đọc VIN hỏng (timeout hoặc khung sai thứ tự): huỷ transaction VIN
+    // đang chạy (nếu có) rồi thử lại nếu còn lượt, hết lượt thì báo lỗi ra UI.
+    private fun retryOrFailVin() {
+        abortActiveUds("vin")
+        vinExpectedLength = -1
+        vinNextSn = -1
+        if (vinAttempt < VIN_MAX_ATTEMPTS - 1) {
+            vinAttempt++
+            enqueueVinRequest()
+        } else {
+            tvVinId.text = getString(R.string.vin_read_failed)
+            tvVinId.setTextColor(getColor(R.color.warning_red))
+        }
     }
 
     private fun writeThreshold() {
@@ -344,19 +449,25 @@ class MainActivity : ImmersiveActivity() {
             return
         }
 
-        val data = byteArrayOf(0x04, 0x2E, 0xF1.toByte(), 0x03, threshold.toByte(), 0, 0, 0)
-        writeAndLog(0x768, data) { success ->
-            if (success) {
-                thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
-                thresholdTimeoutHandler.postDelayed(thresholdTimeoutRunnable, THRESHOLD_TIMEOUT_MS)
-            } else {
-                val errorCode = if (!CanConnector.CanServiceConnector.isConnected()) "01" else "02"
-                showThresholdResult(success = false, errorCode = errorCode)
-            }
+        if (!CanConnector.CanServiceConnector.isConnected()) {
+            showThresholdResult(success = false, errorCode = "01")
+            return
         }
+
+        val data = byteArrayOf(0x04, 0x2E, 0xF1.toByte(), 0x03, threshold.toByte(), 0, 0, 0)
+        enqueueUds(UdsTx(
+            label = "threshold",
+            canId = 0x768,
+            data = data,
+            timeoutMs = THRESHOLD_TIMEOUT_MS,
+            onTimeout = { showThresholdResult(success = false, errorCode = "04") },
+            onSendFailed = { showThresholdResult(success = false, errorCode = "02") }
+        ), front = true)
     }
 
     private fun showThresholdResult(success: Boolean, errorCode: String? = null) {
+        // Kết thúc một lượt ghi (dù thành/bại) → mở lại nút để bấm lượt tiếp.
+        btnSave.isEnabled = true
         if (success) {
             tvThresholdResult.text = getString(R.string.msg_write_success)
             tvThresholdResult.setTextColor(getColor(R.color.neon_green))
@@ -364,6 +475,26 @@ class MainActivity : ImmersiveActivity() {
             tvThresholdResult.text = getString(R.string.msg_write_failed, errorCode)
             tvThresholdResult.setTextColor(getColor(R.color.warning_red))
         }
+        tvThresholdResult.visibility = View.VISIBLE
+    }
+
+    // Gửi yêu cầu đọc lại ngưỡng đang lưu trên ECU (DID F1 03). ECU trả về
+    // 62 F1 03 <g_Threshold>; xem showThresholdReadback để hiển thị.
+    private fun requestThresholdReadback() {
+        enqueueUds(UdsTx("thresholdRead", 0x768,
+            byteArrayOf(0x03, 0x22, 0xF1.toByte(), 0x03, 0, 0, 0, 0), UDS_TIMEOUT_MS,
+            onTimeout = {
+                tvThresholdResult.text = getString(R.string.msg_threshold_readback_failed)
+                tvThresholdResult.setTextColor(getColor(R.color.warning_red))
+                tvThresholdResult.visibility = View.VISIBLE
+            }))
+    }
+
+    // Hiển thị ngưỡng ECU thực sự đang giữ. So sánh với số vừa ghi: nếu KHÁC nhau
+    // thì lệnh ghi F1 03 không tác động tới biến g_Threshold trên ECU (lỗi cấu hình DCM).
+    private fun showThresholdReadback(threshold: Int) {
+        tvThresholdResult.text = getString(R.string.msg_threshold_readback, threshold)
+        tvThresholdResult.setTextColor(getColor(R.color.neon_green))
         tvThresholdResult.visibility = View.VISIBLE
     }
 
@@ -378,16 +509,21 @@ class MainActivity : ImmersiveActivity() {
                     (payload[1].toInt() and 0xFF) == 0x62 && (payload[2].toInt() and 0xFF) == 0xF1 -> {
                 val data = payload[4].toInt() and 0xFF
                 when (payload[3].toInt() and 0xFF) {
-                    0x01 -> updateFuelPercent(data)
-                    0x02 -> updateFuelStatus(data)
+                    0x01 -> { updateFuelPercent(data); completeUds("fuelValue") }
+                    0x02 -> { updateFuelStatus(data); completeUds("fuelStatus") }
+                    0x03 -> { showThresholdReadback(data); completeUds("thresholdRead") }
                 }
             }
             pci == 0x03 && payload.size >= 4 &&
                     (payload[1].toInt() and 0xFF) == 0x6E && (payload[2].toInt() and 0xFF) == 0xF1 &&
                     (payload[3].toInt() and 0xFF) == 0x03 -> {
-                thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
+                completeUds("threshold")
                 showThresholdResult(success = true)
                 Toast.makeText(this, R.string.msg_write_success, Toast.LENGTH_SHORT).show()
+                // Ghi xong thì đọc lại DID F1 03 để xác nhận ECU thực sự đã lưu
+                // giá trị (đối chiếu với số vừa ghi). Nếu đọc về khác số vừa ghi,
+                // nghĩa là lệnh ghi không "xuống" tới biến g_Threshold trên ECU.
+                requestThresholdReadback()
             }
             (pci and 0xF0) == 0x10 -> handleVinFirstFrame(payload)
             (pci and 0xF0) == 0x20 -> handleVinConsecutiveFrame(payload)
@@ -411,6 +547,9 @@ class MainActivity : ImmersiveActivity() {
 
     // First Frame: 10 <len> 62 F1 90 <3 ký tự đầu VIN>
     private fun handleVinFirstFrame(payload: ByteArray) {
+        // Chỉ xử lý khi VIN đang là transaction hoạt động — tránh nhận nhầm khung
+        // lạ khi không hề yêu cầu VIN.
+        if (udsActive?.label != "vin") return
         if (payload.size < 5) return
         if ((payload[2].toInt() and 0xFF) != 0x62 ||
             (payload[3].toInt() and 0xFF) != 0xF1 ||
@@ -420,15 +559,34 @@ class MainActivity : ImmersiveActivity() {
         val totalLen = ((payload[0].toInt() and 0x0F) shl 8) or (payload[1].toInt() and 0xFF)
         vinBuffer.clear()
         vinExpectedLength = totalLen - 3 // trừ 3 byte service (62) + DID (F1 90)
+        vinNextSn = 1 // Consecutive Frame đầu tiên phải mang SN = 1
         for (i in 5 until payload.size) {
             vinBuffer.append((payload[i].toInt() and 0xFF).toChar())
         }
+
+        // Đã nhận First Frame → giờ mới gửi Flow Control để ECU phát Consecutive
+        // Frame. 0x30 = CTS, BlockSize=0 (gửi hết), STmin=0x0A = giãn 10ms mỗi khung
+        // để vòng đọc (đang phải cạnh tranh với broadcast 0x3C6) kịp gom, giảm rớt.
+        writeAndLog(0x768, byteArrayOf(0x30, 0x00, 0x0A, 0, 0, 0, 0, 0))
+
         tryFinishVin()
     }
 
     // Consecutive Frame: 21/22 <7 ký tự tiếp theo>
     private fun handleVinConsecutiveFrame(payload: ByteArray) {
         if (vinExpectedLength < 0) return
+
+        // Kiểm tra thứ tự khung. Nếu SN không khớp giá trị đang chờ nghĩa là có
+        // khung bị rớt/đảo thứ tự — bỏ nguyên lượt và thử lại thay vì ghép nhầm
+        // byte thành VIN sai.
+        val sn = payload[0].toInt() and 0x0F
+        if (sn != vinNextSn) {
+            android.util.Log.w("MainActivity", "VIN CF sai thứ tự: nhận SN=$sn, chờ SN=$vinNextSn")
+            retryOrFailVin()
+            return
+        }
+        vinNextSn = (vinNextSn + 1) and 0x0F
+
         for (i in 1 until payload.size) {
             if (vinBuffer.length >= vinExpectedLength) break
             vinBuffer.append((payload[i].toInt() and 0xFF).toChar())
@@ -438,10 +596,10 @@ class MainActivity : ImmersiveActivity() {
 
     private fun tryFinishVin() {
         if (vinExpectedLength in 0..vinBuffer.length) {
-            vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
             tvVinId.text = vinBuffer.substring(0, vinExpectedLength)
             tvVinId.setTextColor(getColor(R.color.dashboard_on_surface))
             vinExpectedLength = -1
+            completeUds("vin")
         }
     }
 
@@ -454,8 +612,10 @@ class MainActivity : ImmersiveActivity() {
     override fun onPause() {
         CanConnector.CanServiceConnector.removeListener(canListener)
         fuelPollHandler.removeCallbacks(fuelPollRunnable)
-        thresholdTimeoutHandler.removeCallbacks(thresholdTimeoutRunnable)
-        vinTimeoutHandler.removeCallbacks(vinTimeoutRunnable)
+        // Dừng hàng đợi UDS: xoá timeout đang chờ và mọi request còn treo.
+        udsHandler.removeCallbacks(udsTimeoutRunnable)
+        udsQueue.clear()
+        udsActive = null
         super.onPause()
     }
 
@@ -467,6 +627,10 @@ class MainActivity : ImmersiveActivity() {
     companion object {
         private const val FUEL_POLL_INTERVAL_MS = 1000L
         private const val THRESHOLD_TIMEOUT_MS = 2000L
-        private const val VIN_TIMEOUT_MS = 2000L
+        // Timeout chờ phản hồi cho một request UDS single-frame (đọc nhiên liệu/trạng thái).
+        private const val UDS_TIMEOUT_MS = 500L
+        // Timeout mỗi LƯỢT đọc VIN (ngắn để retry nhanh khi rớt khung), và số lượt tối đa.
+        private const val VIN_ATTEMPT_TIMEOUT_MS = 700L
+        private const val VIN_MAX_ATTEMPTS = 3
     }
 }
