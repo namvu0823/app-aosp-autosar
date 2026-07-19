@@ -1,4 +1,4 @@
-package com.example.navis_test
+package com.example.navis_test.ui
 
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat

@@ -1,9 +1,12 @@
-package com.example.navis_test
+package com.example.navis_test.ui.intro
 
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.VideoView
+import com.example.navis_test.R
+import com.example.navis_test.ui.ImmersiveActivity
+import com.example.navis_test.ui.main.MainActivity
 
 // Màn intro phát introapp.mp4 khi mở app. Video chạy xong (hoặc lỗi/không phát được)
 // thì tự chuyển sang MainActivity.
