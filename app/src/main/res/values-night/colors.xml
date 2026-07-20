@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <color name="dashboard_background">#0E1116</color>
+    <color name="dashboard_surface">#1A1D23</color>
+    <color name="dashboard_surface_container">#262A31</color>
+
+    <color name="dashboard_on_surface">#ECEDEF</color>
+    <color name="dashboard_on_surface_variant">#9AA0A9</color>
+
+    <color name="glass_bg">#B31C2029</color>
+    <color name="glass_sheen_start">#26FFFFFF</color>
+    <color name="glass_sheen_end">#00FFFFFF</color>
+    <color name="outline_variant">#333842</color>
+
+    <color name="switch_track_off">#4A4F59</color>
+
+</resources>
