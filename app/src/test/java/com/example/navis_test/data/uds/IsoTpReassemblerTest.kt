@@ -6,9 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-// Kiểm chứng logic ghép ISO-TP (ISO 15765-2) cho VIN: 62 F1 90 + 17 ký tự.
-// VIN "LDC613P23A1300001" → tổng độ dài 20 byte → FF chứa 3 ký tự đầu,
-// 2 Consecutive Frame mỗi khung 7 ký tự.
 class IsoTpReassemblerTest {
 
     private val header = byteArrayOf(0x62, 0xF1.toByte(), 0x90.toByte())
@@ -27,7 +24,6 @@ class IsoTpReassemblerTest {
     private fun bytes(vararg values: Int) = ByteArray(values.size) { values[it].toByte() }
     private fun chars(s: String) = s.map { it.code }.toIntArray()
 
-    // First Frame của VIN: 10 14 62 F1 90 'L' 'D' 'C'
     private fun vinFirstFrame() = bytes(0x10, 0x14, 0x62, 0xF1, 0x90, *chars("LDC"))
     private fun vinCf1() = bytes(0x21, *chars("613P23A"))
     private fun vinCf2() = bytes(0x22, *chars("1300001"))
@@ -37,17 +33,17 @@ class IsoTpReassemblerTest {
         val r = newReassembler()
 
         assertTrue(r.onFirstFrame(vinFirstFrame()))
-        assertEquals(1, flowControlCount) // FC gửi đúng 1 lần, sau FF
+        assertEquals(1, flowControlCount)
         assertTrue(r.isActive)
         assertNull(completed)
 
         r.onConsecutiveFrame(vinCf1())
-        assertNull(completed) // mới 10/17 ký tự
+        assertNull(completed)
 
         r.onConsecutiveFrame(vinCf2())
         val vin = completed!!.toString(Charsets.US_ASCII)
         assertEquals("LDC613P23A1300001", vin)
-        assertFalse(r.isActive) // xong lượt thì tự reset
+        assertFalse(r.isActive)
         assertNull(sequenceError)
     }
 
@@ -56,12 +52,11 @@ class IsoTpReassemblerTest {
         val r = newReassembler()
         r.onFirstFrame(vinFirstFrame())
 
-        // Rớt CF1 (SN=1), CF2 (SN=2) tới trước
         r.onConsecutiveFrame(vinCf2())
 
         assertEquals(Pair(2, 1), sequenceError)
         assertNull(completed)
-        assertFalse(r.isActive) // lượt hỏng phải bị huỷ để caller retry
+        assertFalse(r.isActive)
     }
 
     @Test
@@ -76,7 +71,7 @@ class IsoTpReassemblerTest {
     @Test
     fun `FF sai header bi tu choi`() {
         val r = newReassembler()
-        // Header F1 91 thay vì F1 90
+
         val wrong = bytes(0x10, 0x14, 0x62, 0xF1, 0x91, *chars("LDC"))
         assertFalse(r.onFirstFrame(wrong))
         assertEquals(0, flowControlCount)
@@ -95,7 +90,7 @@ class IsoTpReassemblerTest {
 
     @Test
     fun `SN quay vong 15 ve 0`() {
-        // Payload dài để cần hơn 16 CF: header + 120 ký tự 'A'
+
         val totalLen = 3 + 120
         val r = newReassembler()
         val ff = bytes(0x10 or (totalLen shr 8), totalLen and 0xFF, 0x62, 0xF1, 0x90, *chars("AAA"))

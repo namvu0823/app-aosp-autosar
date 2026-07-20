@@ -15,8 +15,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-// Dịch trạng thái kỹ thuật của VehicleRepository thành DashboardUiState cho View,
-// và dịch thao tác người dùng thành lệnh nghiệp vụ. Không biết gì về View/byte/CAN ID.
 class MainViewModel : ViewModel() {
 
     private val repo = VehicleRepository
@@ -32,7 +30,7 @@ class MainViewModel : ViewModel() {
     private var fakeVinJob: Job? = null
 
     init {
-        // Kết nối CAN sau một nhịp ngắn để giao diện load xong trước (giữ hành vi cũ).
+
         viewModelScope.launch {
             delay(CONNECT_DELAY_MS)
             repo.ensureStarted()
@@ -41,6 +39,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             repo.connectionState.collect { c -> _uiState.update { it.copy(connection = c) } }
         }
+
         viewModelScope.launch {
             repo.vehicleStatus.collect { v -> _uiState.update { it.copy(vehicle = v) } }
         }
@@ -59,10 +58,8 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    // ---- Vòng đời màn hình ----
-
     fun onResumed() {
-        // Poll nhiên liệu mỗi 1 giây khi màn hình hiển thị.
+
         fuelPollJob?.cancel()
         fuelPollJob = viewModelScope.launch {
             while (true) {
@@ -71,7 +68,7 @@ class MainViewModel : ViewModel() {
                 delay(FUEL_POLL_INTERVAL_MS)
             }
         }
-        // Chỉ gom log RX/TX khi màn hình hiển thị (giữ hành vi listener cũ).
+
         logJob?.cancel()
         logJob = viewModelScope.launch {
             repo.canLog.collect { appendLog(it) }
@@ -83,11 +80,9 @@ class MainViewModel : ViewModel() {
         fuelPollJob = null
         logJob?.cancel()
         logJob = null
-        // Dừng hàng đợi UDS để không tiếp tục bắn request khi màn không hiển thị.
+
         repo.cancelPendingUds()
     }
-
-    // ---- Thao tác người dùng ----
 
     fun onLightToggled(on: Boolean) = repo.setLight(on)
 
@@ -98,9 +93,7 @@ class MainViewModel : ViewModel() {
             repo.readVin()
             return
         }
-        // Chế độ demo: hiện "đang đọc" rồi trả VIN cố định, KHÔNG gửi gói tin CAN
-        // nào (giữ nguyên hành vi hiện tại của app). Bật USE_REAL_VIN để dùng
-        // đường ISO-TP thật trong VehicleRepository.
+
         _uiState.update { it.copy(vin = VinState.Reading) }
         fakeVinJob?.cancel()
         fakeVinJob = viewModelScope.launch {
@@ -119,13 +112,10 @@ class MainViewModel : ViewModel() {
             _uiState.update { it.copy(threshold = ThresholdUi.Result(false, "01")) }
             return
         }
-        // Khoá nút ngay khi bấm: tránh nhồi nhiều lệnh ghi vào hàng đợi và cho
-        // phản hồi trực quan "đang xử lý". Mở lại khi có kết quả.
+
         _uiState.update { it.copy(thresholdSaving = true) }
         repo.writeThreshold(value)
     }
-
-    // ---- Nội bộ ----
 
     private fun onThresholdEvent(event: ThresholdEvent) {
         when (event) {
@@ -162,8 +152,6 @@ class MainViewModel : ViewModel() {
         private const val FUEL_POLL_INTERVAL_MS = 1000L
         private const val MAX_LOG = 5
 
-        // Nút ĐỌC VIN: false = hiện VIN cố định cho demo (hành vi hiện tại),
-        // true = đọc VIN thật từ ECU qua ISO-TP (VehicleRepository.readVin).
         private const val USE_REAL_VIN = false
         private const val FAKE_VIN = "LDC613P23A1300001"
         private const val FAKE_VIN_DELAY_MS = 900L

@@ -1,9 +1,8 @@
 package com.example.navis_test.model
 
-// Một dòng log RX/TX dùng chung cho dashboard và màn debug.
 class CanLogEntry(
     val direction: Direction,
-    val ok: Boolean, // với TX: gửi lên bus thành công hay không; RX luôn true
+    val ok: Boolean,
     val canId: Int,
     val data: ByteArray,
     val atMillis: Long

@@ -7,9 +7,6 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-// Tầng transport: giữ binder tới native CanService (hust.can.ICan/default),
-// mọi thao tác open/write/close đi qua 1 executor riêng, và 1 luồng đọc dùng chung
-// cho toàn app. Các tầng trên KHÔNG gọi trực tiếp object này — đi qua VehicleRepository.
 object CanConnector {
     private var canService: ICan? = null
     private val lock = Any()
@@ -18,8 +15,6 @@ object CanConnector {
     private var readThread: Thread? = null
     private val listeners = CopyOnWriteArrayList<(Int, ByteArray) -> Unit>()
 
-    // Executor riêng để mọi thao tác binder (open/write/close) không bao giờ
-    // chạy trên main thread. Chỉ 1 thread để tránh nhiều lệnh ghi/mở tranh nhau.
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "CanService-IO").apply { isDaemon = true }
     }
@@ -71,8 +66,6 @@ object CanConnector {
 
     fun isConnected(): Boolean = synchronized(lock) { canService != null }
 
-    // Trả về Pair<canId thật, payload thật theo đúng dlc>, hoặc null nếu lỗi.
-    // Hàm này CHỈ được gọi từ readThread (background), không gọi trực tiếp từ UI.
     private fun read(): Pair<Int, ByteArray>? {
         val rawBuffer = ByteArray(12)
         val service = synchronized(lock) { canService } ?: return null
@@ -92,10 +85,6 @@ object CanConnector {
         return Pair(canId, payload)
     }
 
-    // Đăng ký để nhận mọi gói CAN đọc được (dùng chung 1 luồng đọc cho toàn app,
-    // tránh nhiều màn hình cùng gọi read() và tranh nhau dữ liệu).
-    // LƯU Ý: listener được gọi trên background thread (readThread) — nếu cần
-    // cập nhật UI, caller phải tự post lên main thread (Handler/runOnUiThread).
     fun addListener(listener: (Int, ByteArray) -> Unit) {
         listeners.add(listener)
     }
@@ -120,13 +109,9 @@ object CanConnector {
                             android.util.Log.e("CanConnector", "Listener threw: ${e.message}")
                         }
                     }
-                    // Còn dữ liệu thì đọc tiếp ngay — không sleep, nếu không
-                    // các khung ISO-TP về liền nhau (VIN) sẽ bị dồn ứ/drop
-                    // khi bus có broadcast 0x3C6 liên tục.
+
                 } else {
-                    // Không có frame: canRead() phía service đã poll chờ 200ms
-                    // rồi mới trả -1. Nghỉ ngắn thêm để không quay tít khi
-                    // service chết (safeCall trả -1 ngay lập tức).
+
                     try {
                         Thread.sleep(20)
                     } catch (e: InterruptedException) {
@@ -161,10 +146,6 @@ object CanConnector {
         }
     }
 
-    /**
-     * Gọi shutdown khi không còn cần dùng connector nữa (ví dụ onDestroy của Application),
-     * để giải phóng thread trong ioExecutor.
-     */
     fun shutdown() {
         stopReadingLoop()
         ioExecutor.shutdown()
@@ -177,8 +158,6 @@ object CanConnector {
         }
     }
 
-    // Bọc mọi binder call: bắt exception (DeadObjectException, RemoteException, ...)
-    // để service crash/không phản hồi không làm chết app hoặc treo caller.
     private fun <T> safeCall(tag: String, block: () -> T): T {
         return try {
             block()

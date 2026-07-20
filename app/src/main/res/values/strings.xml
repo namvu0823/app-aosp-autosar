@@ -33,10 +33,10 @@
     <string name="light_mode_solid">Đèn luôn sáng</string>
     <string name="light_mode_blink">Đèn nhấp nháy</string>
 
-    <!-- CAN monitor -->
     <string name="title_can_monitor">CAN Monitor</string>
     <string name="can_rx_placeholder">RX  --</string>
     <string name="can_tx_placeholder">TX  --</string>
+    <string name="status_connecting">Đang kết nối…</string>
     <string name="status_online">ONLINE</string>
     <string name="status_offline">không kết nối</string>
     <string name="status_error">LỖI</string>

@@ -2,8 +2,7 @@ package com.example.navis_test.ui.main
 
 import android.os.Bundle
 import android.view.View
-import android.view.animation.Animation
-import android.view.animation.RotateAnimation
+import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.CompoundButton
 import android.widget.EditText
@@ -25,8 +24,6 @@ import com.example.navis_test.ui.ImmersiveActivity
 import com.example.navis_test.ui.ThemeManager
 import kotlinx.coroutines.launch
 
-// Dashboard chính — chỉ còn việc của View: bind view, đẩy thao tác người dùng
-// sang MainViewModel và vẽ DashboardUiState. Toàn bộ logic CAN/UDS nằm ở tầng data.
 class MainActivity : ImmersiveActivity() {
 
     private val viewModel: MainViewModel by viewModels()
@@ -55,15 +52,12 @@ class MainActivity : ImmersiveActivity() {
     private lateinit var lightsListener: CompoundButton.OnCheckedChangeListener
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Áp chế độ sáng/tối đã lưu TRƯỚC super.onCreate để không bị recreate/nháy màn.
+
         ThemeManager.applySaved(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         bindViews()
-
-        tvCanRx.text = "RX: Idle"
-        tvCanTx.text = "TX: Idle"
 
         findViewById<ImageButton>(R.id.btnToggleTheme).setOnClickListener {
             ThemeManager.toggle(this)
@@ -87,6 +81,7 @@ class MainActivity : ImmersiveActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.uiState.collect { render(it) } }
                 launch {
+
                     viewModel.events.collect { event ->
                         when (event) {
                             is MainEvent.ShowWriteSuccessToast ->
@@ -132,10 +127,9 @@ class MainActivity : ImmersiveActivity() {
         tvCanStatus = findViewById(R.id.tvCanStatus)
     }
 
-    // ---- Vẽ UiState ra màn hình ----
-
     private fun render(state: DashboardUiState) {
         renderConnection(state.connection)
+
         state.vehicle?.let { renderVehicle(it) }
         renderFuel(state.fuelPercent, state.fuelNormal)
         renderVin(state.vin)
@@ -145,20 +139,12 @@ class MainActivity : ImmersiveActivity() {
     }
 
     private fun renderConnection(connection: ConnectionState) {
+        tvCanStatus.isActivated = connection == ConnectionState.ONLINE
         when (connection) {
-            ConnectionState.CONNECTING -> Unit // giữ chữ mặc định của layout
-            ConnectionState.ONLINE -> {
-                tvCanStatus.text = getString(R.string.status_online)
-                tvCanStatus.setTextColor(getColor(R.color.neon_green))
-            }
-            ConnectionState.SERVICE_OFFLINE -> {
-                tvCanStatus.text = getString(R.string.status_offline)
-                tvCanStatus.setTextColor(getColor(R.color.warning_red))
-            }
-            ConnectionState.OPEN_FAILED -> {
-                tvCanStatus.text = getString(R.string.status_error)
-                tvCanStatus.setTextColor(getColor(R.color.warning_red))
-            }
+            ConnectionState.CONNECTING -> Unit
+            ConnectionState.ONLINE -> tvCanStatus.text = getString(R.string.status_online)
+            ConnectionState.SERVICE_OFFLINE -> tvCanStatus.text = getString(R.string.status_offline)
+            ConnectionState.OPEN_FAILED -> tvCanStatus.text = getString(R.string.status_error)
         }
     }
 
@@ -169,55 +155,32 @@ class MainActivity : ImmersiveActivity() {
     }
 
     private fun renderLightStatus(isOn: Boolean, isBlinking: Boolean) {
-        // Đồng bộ Switch theo trạng thái thực tế, không kích hoạt lại listener
+
         switchLights.setOnCheckedChangeListener(null)
         switchLights.isChecked = isOn
         switchLights.setOnCheckedChangeListener(lightsListener)
 
         tvLightState.text = getString(if (isOn) R.string.light_state_on else R.string.light_state_off)
-        tvLightState.setTextColor(getColor(if (isOn) R.color.electric_blue else R.color.dashboard_on_surface_variant))
+        tvLightState.isActivated = isOn
 
         tvLightMode.text = getString(if (isBlinking) R.string.light_mode_blink else R.string.light_mode_solid)
-        tvLightMode.setTextColor(getColor(if (isBlinking) R.color.purple_500 else R.color.dashboard_on_surface_variant))
+        tvLightMode.isActivated = isBlinking
 
-        btnNormal.setBackgroundResource(R.drawable.glass_panel)
-        if (isOn && !isBlinking) {
-            btnNormal.backgroundTintList = getColorStateList(R.color.purple_500)
-            btnNormal.setTextColor(getColor(R.color.white))
-        } else {
-            btnNormal.backgroundTintList = getColorStateList(R.color.dashboard_surface_container)
-            btnNormal.setTextColor(getColor(R.color.dashboard_on_surface_variant))
-        }
-
-        btnBlink.setBackgroundResource(R.drawable.glass_panel)
-        if (isOn && isBlinking) {
-            btnBlink.backgroundTintList = getColorStateList(R.color.purple_500)
-            btnBlink.setTextColor(getColor(R.color.white))
-        } else {
-            btnBlink.backgroundTintList = getColorStateList(R.color.dashboard_surface_container)
-            btnBlink.setTextColor(getColor(R.color.dashboard_on_surface_variant))
-        }
+        btnNormal.isSelected = isOn && !isBlinking
+        btnBlink.isSelected = isOn && isBlinking
     }
 
     private fun renderDoorStatus(unlocked: Boolean) {
         tvDoorStatus.text = getString(if (unlocked) R.string.door_unlocked else R.string.door_locked)
-        ivDoorLock.setImageResource(if (unlocked) android.R.drawable.ic_lock_power_off else android.R.drawable.ic_lock_lock)
-        val color = getColor(if (unlocked) R.color.warning_red else R.color.neon_green)
-        tvDoorStatus.setTextColor(color)
-        ivDoorLock.setColorFilter(color)
+        tvDoorStatus.isActivated = unlocked
+        ivDoorLock.isActivated = unlocked
     }
 
     private fun renderClimateStatus(isOn: Boolean) {
         tvClimateStatus.text = getString(if (isOn) R.string.climate_on else R.string.climate_off)
-        if (isOn) {
-            startFanAnimation()
-            ivFan.setColorFilter(getColor(R.color.electric_blue))
-            tvClimateStatus.setTextColor(getColor(R.color.electric_blue))
-        } else {
-            ivFan.clearAnimation()
-            ivFan.setColorFilter(getColor(R.color.dashboard_on_surface_variant))
-            tvClimateStatus.setTextColor(getColor(R.color.dashboard_on_surface_variant))
-        }
+        tvClimateStatus.isActivated = isOn
+        ivFan.isActivated = isOn
+        if (isOn) startFanAnimation() else ivFan.clearAnimation()
     }
 
     private fun renderFuel(percent: Int?, normal: Boolean?) {
@@ -226,19 +189,14 @@ class MainActivity : ImmersiveActivity() {
             pbFuel.progress = percent
         }
         if (normal != null) {
-            if (normal) {
-                tvFuelStatus.text = getString(R.string.fuel_status_normal)
-                tvFuelStatus.setTextColor(getColor(R.color.neon_green))
-            } else {
-                tvFuelStatus.text = getString(R.string.fuel_status_warning)
-                tvFuelStatus.setTextColor(getColor(R.color.warning_red))
-            }
+            tvFuelStatus.text = getString(if (normal) R.string.fuel_status_normal else R.string.fuel_status_warning)
+            tvFuelStatus.isActivated = !normal
         }
     }
 
     private fun renderVin(vin: VinState) {
         when (vin) {
-            is VinState.Idle -> Unit // giữ chữ mặc định của layout
+            is VinState.Idle -> Unit
             is VinState.Reading -> {
                 tvVinId.text = getString(R.string.vin_reading)
                 tvVinId.setTextColor(getColor(R.color.dashboard_on_surface_variant))
@@ -259,33 +217,21 @@ class MainActivity : ImmersiveActivity() {
         when (val threshold = state.threshold) {
             is ThresholdUi.Idle -> Unit
             is ThresholdUi.Result -> {
-                if (threshold.success) {
-                    tvThresholdResult.text = getString(R.string.msg_write_success)
-                    tvThresholdResult.setTextColor(getColor(R.color.neon_green))
-                } else {
-                    tvThresholdResult.text = getString(R.string.msg_write_failed, threshold.errorCode)
-                    tvThresholdResult.setTextColor(getColor(R.color.warning_red))
-                }
+                tvThresholdResult.text =
+                    if (threshold.success) getString(R.string.msg_write_success)
+                    else getString(R.string.msg_write_failed, threshold.errorCode)
+                tvThresholdResult.isActivated = threshold.success
                 tvThresholdResult.visibility = View.VISIBLE
             }
             is ThresholdUi.Readback -> {
                 tvThresholdResult.text = getString(R.string.msg_threshold_readback, threshold.value)
-                tvThresholdResult.setTextColor(getColor(R.color.neon_green))
+                tvThresholdResult.isActivated = true
                 tvThresholdResult.visibility = View.VISIBLE
             }
         }
     }
 
     private fun startFanAnimation() {
-        val rotate = RotateAnimation(
-            0f, 360f,
-            Animation.RELATIVE_TO_SELF, 0.5f,
-            Animation.RELATIVE_TO_SELF, 0.5f
-        ).apply {
-            duration = 2000
-            repeatCount = Animation.INFINITE
-            interpolator = android.view.animation.LinearInterpolator()
-        }
-        ivFan.startAnimation(rotate)
+        ivFan.startAnimation(AnimationUtils.loadAnimation(this, R.anim.fan_rotate))
     }
 }
